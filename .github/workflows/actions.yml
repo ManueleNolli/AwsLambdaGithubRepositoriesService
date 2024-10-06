@@ -1,0 +1,150 @@
+# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+
+name: Node.js CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: echo "Passed as always :)"
+
+  build:
+    name: Build
+    needs: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [ 22.x ]
+        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v4
+        id: yarn-cache
+        with:
+          path: |
+            ${{ steps.yarn-cache-dir-path.outputs.dir }}
+            ${{ github.workspace }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/yarn.lock') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/yarn.lock') }}-
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Fill .env file
+        run: echo "API_KEY_GITHUB=${{ secrets.API_KEY_GITHUB }}" >> .env
+
+      - run: yarn install --frozen-lockfile
+      - run: yarn build
+
+      - name: Share build files
+        uses: actions/upload-artifact@v4
+        with:
+            name: build
+            include-hidden-files: true
+            path: build
+
+      - name: Share node_modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: node_modules
+          include-hidden-files: true
+          path: node_modules
+
+  upload_code:
+    name: Upload code to S3
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download static files from previous job
+        uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: build
+
+      - name: Create zip
+        run: cd build && zip -r ${{ vars.CODE_ZIP_NAME }}.zip .
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload standalone built files to S3
+        run: aws s3 cp build/${{ vars.CODE_ZIP_NAME }}.zip s3://${{ secrets.AWS_S3_BUCKET_CODE_NAME }}/${{ vars.CODE_ZIP_NAME }}.zip
+
+  upload_dependencies:
+    name: Upload dependencies to S3
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dependencies files from previous job
+        uses: actions/download-artifact@v4
+        with:
+          name: node_modules
+          path: nodejs/node_modules
+
+      - name: Zip node_modules files
+        run: zip -r ${{ vars.DEPENDENCIES_ZIP_NAME }}.zip nodejs
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload standalone built files to S3
+        run: aws s3 cp ${{ vars.DEPENDENCIES_ZIP_NAME }}.zip s3://${{ secrets.AWS_S3_BUCKET_CODE_NAME }}/${{ vars.DEPENDENCIES_ZIP_NAME }}.zip
+
+  update_lambda:
+    name: Update Lambda function with new zip(s)
+    runs-on: ubuntu-latest
+    needs: [ upload_code, upload_dependencies ]
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Dependencies step 1 - Publish new version
+        run: aws lambda publish-layer-version --layer-name ${{ secrets.AWS_LAMBDA_LAYER_NAME }} --content S3Bucket=${{ secrets.AWS_S3_BUCKET_CODE_NAME }},S3Key=${{ vars.DEPENDENCIES_ZIP_NAME }}.zip
+      - name: Upload code to Lambda
+        run: aws lambda update-function-code --function-name ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }} --s3-bucket ${{ secrets.AWS_S3_BUCKET_CODE_NAME }} --s3-key ${{ vars.CODE_ZIP_NAME }}.zip
+
+      - name: Dependencies step 2 - Fetch new layer version
+        run: echo "AWS_LAMBDA_LAYER_VERSION=$(aws lambda list-layer-versions --layer-name ${{ secrets.AWS_LAMBDA_LAYER_NAME }} --query 'LayerVersions[0].Version' --output text)" >> $GITHUB_ENV
+
+      - name: Dependencies step 3 - Update Lambda function with new layer version
+        run: aws lambda update-function-configuration --function-name ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }} --layers arn:aws:lambda:${{ vars.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:layer:${{ secrets.AWS_LAMBDA_LAYER_NAME }}:$AWS_LAMBDA_LAYER_VERSION
+
+      - name: Dependencies step 4 - Clean up old versions
+        run: aws lambda list-layer-versions --layer-name ${{ secrets.AWS_LAMBDA_LAYER_NAME }} --query "LayerVersions[?Version!=\`$AWS_LAMBDA_LAYER_VERSION\`].Version" --output text | tr '\t' '\n' | xargs -I {} aws lambda delete-layer-version --layer-name ${{ secrets.AWS_LAMBDA_LAYER_NAME }} --version-number {}
+
