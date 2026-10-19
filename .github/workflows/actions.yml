@@ -14,7 +14,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run tests
         run: echo "Passed as always :)"
 
@@ -28,13 +28,13 @@ jobs:
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Get yarn cache directory path
         id: yarn-cache-dir-path
         run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: yarn-cache
         with:
           path: |
@@ -45,7 +45,7 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/yarn.lock') }}-
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -60,14 +60,14 @@ jobs:
         run: yarn install --frozen-lockfile --production
 
       - name: Share build files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
             name: build
             include-hidden-files: true
             path: build
 
       - name: Share node_modules
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node_modules
           include-hidden-files: true
@@ -82,10 +82,10 @@ jobs:
       id-token: write # OIDC token to assume the AWS deploy role
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download static files from previous job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build
           path: build
@@ -94,7 +94,7 @@ jobs:
         run: cd build && zip -r ${{ vars.CODE_ZIP_NAME }}.zip .
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -111,10 +111,10 @@ jobs:
       id-token: write # OIDC token to assume the AWS deploy role
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download dependencies files from previous job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node_modules
           path: nodejs/node_modules
@@ -123,7 +123,7 @@ jobs:
         run: zip -r ${{ vars.DEPENDENCIES_ZIP_NAME }}.zip nodejs
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -141,7 +141,7 @@ jobs:
 
     steps:
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
