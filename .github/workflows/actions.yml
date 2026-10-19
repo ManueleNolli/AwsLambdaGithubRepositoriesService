@@ -151,6 +151,10 @@ jobs:
       - name: Upload code to Lambda
         run: aws lambda update-function-code --function-name ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }} --s3-bucket ${{ secrets.AWS_S3_BUCKET_CODE_NAME }} --s3-key ${{ vars.CODE_ZIP_NAME }}.zip
 
+      # Code updates are asynchronous: the configuration can't change until it completes
+      - name: Wait for the code update to complete
+        run: aws lambda wait function-updated --function-name ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }}
+
       - name: Dependencies step 2 - Fetch new layer version
         run: echo "AWS_LAMBDA_LAYER_VERSION=$(aws lambda list-layer-versions --layer-name ${{ secrets.AWS_LAMBDA_LAYER_NAME }} --query 'LayerVersions[0].Version' --output text)" >> $GITHUB_ENV
 
